@@ -7,21 +7,20 @@ defmodule ExMatrixApi do
   Hello world.
 
   ## Examples
-
-      iex> ExMatrixApi.hello()
-      :world
-
+  ExMatrixApi.t("password")
+  ExMatrixApi.R0.connect(:test)
+  
   """
 
-  def t do
+  def t(password) do
     %ExMatrixApi.Worker{
     id: :test,
     homeserver: "evil.red",
     deviceid: "elixir",
-    password: "redacted",
+    password: password,
     port: 8448,
     sessionid: nil,
-    username: "redelixir"}
+    username: "@redelixir:evil.red"}
 
     |> initialize
   end
