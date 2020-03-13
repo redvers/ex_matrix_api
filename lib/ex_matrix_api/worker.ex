@@ -12,16 +12,17 @@ defmodule ExMatrixApi.Worker do
   end
 
  
-  def handle_event({:call, from}, :connect,         :init,          state), do: connect_action({:call, from}, :connect, :init, state)
-  def handle_event({:call, from}, :r0_versions,     :connected,     state), do: version_action(state, from)
-  def handle_event({:call, from}, :login,           :connected,     state), do:   login_action({:call, from}, :login, :connected, state)
+  def handle_event({:call, from}, :connect,         :init,          state), do: connect_action(from, state)
+  def handle_event({:call, from}, :r0_versions,     :connected,     state), do: version_action(from, state)
+  def handle_event({:call, from}, :login,           :connected,     state), do:   login_action(from, state)
 
   def handle_event({:call, from}, :r0_logout,       :authenticated, state), do: logout_r0_action(from, state)
-  def handle_event({:call, from}, :r0_whoami,       :authenticated, state), do: whoami_r0_action(from, state)
-  def handle_event({:call, from}, :r0_capabilities, :authenticated, state), do: capabi_r0_action(from, state)
-  def handle_event({:call, from}, :r0_joined_rooms, :authenticated, state), do: join_r_r0_action(from, state)
-  def handle_event({:call, from}, :r0_sync,         :authenticated, state), do: sync_r0_action(from, state)
-  def handle_event({:call, from}, {:r0_sync, t},    :authenticated, state), do: sync_r0_action(from, t, state)
+
+  def handle_event({:call, from}, :r0_whoami,       f=:authenticated, state), do: get_authd_action(from, f, state, "account/whoami")
+  def handle_event({:call, from}, :r0_capabilities, f=:authenticated, state), do: get_authd_action(from, f, state, "capabilities")
+  def handle_event({:call, from}, :r0_joined_rooms, f=:authenticated, state), do: get_authd_action(from, f, state, "joined_rooms")
+  def handle_event({:call, from}, :r0_sync,         f=:authenticated, state), do: get_authd_action(from, f, state, "sync")
+  def handle_event({:call, from}, {:r0_sync, t},    f=:authenticated, state), do: get_authd_action(from, f, state, "sync?since=#{t}")
 
   def handle_event(:info, {:gun_up,_,_},         fsm, state), do: {:next_state, fsm, state}
   def handle_event(:info, {:gun_down,_,_},       fsm, state), do: {:next_state, fsm, state}
@@ -41,13 +42,11 @@ defmodule ExMatrixApi.Worker do
 
 
 
+  def get_authd_action(from, fsm, state, url) do
+    {:next_state, fsm, state, [{:reply, from, get_authed(state, "/_matrix/client/r0/#{url}")}]}
+  end
 
 
-
-  def sync_r0_action(from, state), do: {:next_state, :authenticated, state, [{:reply, from, get_authed(state, "/_matrix/client/r0/sync")}]}
-  def sync_r0_action(from, t, state), do: {:next_state, :authenticated, state, [{:reply, from, get_authed(state, "/_matrix/client/r0/sync?since=#{t}")}]}
-  def join_r_r0_action(from, state), do: {:next_state, :authenticated, state, [{:reply, from, get_authed(state, '/_matrix/client/r0/joined_rooms')}]}
-  def capabi_r0_action(from, state), do: {:next_state, :authenticated, state, [{:reply, from, get_authed(state, '/_matrix/client/r0/capabilities')}]}
 
   def logout_r0_action(from, state) do
     newstate =
@@ -57,10 +56,8 @@ defmodule ExMatrixApi.Worker do
     {:next_state, :connected, newstate, [{:reply, from, post_authed(state, '/_matrix/client/r0/logout', "")}]}
   end
 
-  def whoami_r0_action(from, state), do: {:next_state, :authenticated, state, [{:reply, from, get_authed(state, '/_matrix/client/r0/account/whoami')}]}
-
-  def version_action(state, from), do: {:next_state, :connected, state, [{:reply, from, get_noauth(state, '/_matrix/client/versions')}]}
-  def login_action({:call, from}, :login, :connected, state = %ExMatrixApi.Worker{gunpid: gunpid}) do
+  def version_action(from, state), do: {:next_state, :connected, state, [{:reply, from, get_noauth(state, '/_matrix/client/versions')}]}
+  def login_action(from, state = %ExMatrixApi.Worker{gunpid: gunpid}) do
       body = 
       %{identifier: %{type: "m.id.user", user: state.username},
         password: state.password,
@@ -83,7 +80,7 @@ defmodule ExMatrixApi.Worker do
 
   end
 
-  def connect_action({:call, from}, :connect, :init, state = %ExMatrixApi.Worker{gunpid: nil, homeserver: hs, port: port}) do
+  def connect_action(from, state = %ExMatrixApi.Worker{gunpid: nil, homeserver: hs, port: port}) do
    homeserver = String.to_charlist(hs)
 
    {:ok, pid} = :gun.open(homeserver, port, %{transport: :tls})
@@ -92,6 +89,10 @@ defmodule ExMatrixApi.Worker do
                         :gun.close(pid)
                         {:next_state, :init, state, [{:reply, from, {:error, error}}]}
      {:ok, :http}    -> Logger.debug("Connected...")
+                        newstate = state
+                                   |> Map.put(:gunpid, pid)
+                        {:next_state, :connected, newstate, [{:reply, from, :ok}]}
+     {:ok, :http2}   -> Logger.debug("Connected :http2")
                         newstate = state
                                    |> Map.put(:gunpid, pid)
                         {:next_state, :connected, newstate, [{:reply, from, :ok}]}
